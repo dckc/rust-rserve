@@ -3,3 +3,6 @@
 name = "rust-rserve"
 version = "0.0.1"
 authors = ["Dan Connolly <dckc@madmode.com>"]
+
+[[lib]]
+name = "rserve"
