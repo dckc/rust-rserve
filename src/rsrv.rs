@@ -1,6 +1,8 @@
 use std::str::from_utf8;
 use std::io::{IoError, IoResult, InvalidInput};
+use std::io::net::ip::Port;
 use std::iter::range_inclusive;
+use std::io::TcpStream;
 
 bitflags!(
     flags Flags: u32 {
@@ -109,6 +111,12 @@ impl<R: Reader> ReadIDString for R {
         try!(self.read_at_least(32, buf));
         ServerProtocol::decode_id_string(buf)
     }
+}
+
+pub fn connect(host: &str, port: Option<Port>) -> IoResult<(TcpStream, ServerProtocol)> {
+    let mut socket = try!(TcpStream::connect(host, port.unwrap_or(super::DEFAULT_PORT)));
+    let protocol = try!(socket.read_id_string());
+    Ok((socket, protocol))
 }
 
 
