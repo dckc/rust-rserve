@@ -56,6 +56,73 @@ enum DT{
 */
 }
 
+/* XpressionTypes
+   REXP - R expressions are packed in the same way as command parameters
+   transport format of the encoded Xpressions:
+   [0] int type/len (1 byte type, 3 bytes len - same as SET_PAR)
+   [4] REXP attr (if bit 8 in type is set)
+   [4/8] data .. */
+#[deriving(FromPrimitive, Show, Eq, PartialEq)]
+#[repr(uint)]
+#[allow(non_camel_case_types)]
+enum XpressionTypes {
+    XT_NULL          = 0,  /* P  data: [0] */
+    XT_INT           = 1,  /* -  data: [4]int */
+    XT_DOUBLE        = 2,  /* -  data: [8]double */
+    XT_STR           = 3,  /* P  data: [n]char null-term. strg. */
+    XT_LANG          = 4,  /* -  data: same as XT_LIST */
+    XT_SYM           = 5,  /* -  data: [n]char symbol name */
+    XT_BOOL          = 6,  /* -  data: [1]byte boolean
+							     (1=TRUE, 0=FALSE, 2=NA) */
+    XT_S4            = 7,  /* P  data: [0] */
+
+    XT_VECTOR        = 16, /* P  data: [?]REXP,REXP,.. */
+    XT_LIST          = 17, /* -  X head, X vals, X tag (since 0.1-5) */
+    XT_CLOS          = 18, /* P  X formals, X body  (closure; since 0.1-5) */
+    XT_SYMNAME       = 19, /* s  same as XT_STR (since 0.5) */
+    XT_LIST_NOTAG    = 20, /* s  same as XT_VECTOR (since 0.5) */
+    XT_LIST_TAG      = 21, /* P  X tag, X val, Y tag, Y val, ... (since 0.5) */
+    XT_LANG_NOTAG    = 22, /* s  same as XT_LIST_NOTAG (since 0.5) */
+    XT_LANG_TAG      = 23, /* s  same as XT_LIST_TAG (since 0.5) */
+    XT_VECTOR_EXP    = 26, /* s  same as XT_VECTOR (since 0.5) */
+    XT_VECTOR_STR    = 27, /* -  same as XT_VECTOR (since 0.5 but unused, use XT_ARRAY_STR instead) */
+
+    XT_ARRAY_INT     = 32, /* P  data: [n*4]int,int,.. */
+    XT_ARRAY_DOUBLE  = 33, /* P  data: [n*8]double,double,.. */
+    XT_ARRAY_STR     = 34, /* P  data: string,string,.. (string=byte,byte,...,0) padded with '\01' */
+    XT_ARRAY_BOOL_UA = 35, /* -  data: [n]byte,byte,..  (unaligned! NOT supported anymore) */
+    XT_ARRAY_BOOL    = 36, /* P  data: int(n),byte,byte,... */
+    XT_RAW           = 37, /* P  data: int(n),byte,byte,... */
+    XT_ARRAY_CPLX    = 38, /* P  data: [n*16]double,double,... (Re,Im,Re,Im,...) */
+
+    XT_UNKNOWN       = 48, /*  deprecated/removed.
+                             if a client doesn't need to support old Rserve versions,
+                             those can be safely skipped.
+  Total primary: 4 trivial types (NULL, STR, S4, UNKNOWN) + 6 array types + 3 recursive types
+*/
+}
+
+impl XpressionTypes {
+    fn decode(word: u32) -> IoResult<(XpressionTypes, bool, u32)> {
+        let (has_attr, ty, len) = (word & XT_HAS_ATTR > 0,  word & 0x3F, word >> 8);
+
+        match from_uint::<XpressionTypes>(ty as uint) {
+            None => invalid_input("bad XT", format!("{}", ty)),
+            Some(xt) => Ok((xt, has_attr, len))
+        }
+    }
+}
+
+
+/* new in 0102: if this flag is set then the length of the object
+is coded as 56-bit integer enlarging the header by 4 bytes */
+static XT_LARGE: u32 = 64;
+/* flag; if set, the following REXP is the
+attribute */
+static XT_HAS_ATTR: u32 = 128;
+
+/* the use of attributes and vectors results in recursive storage of REXPs */
+
 
 //ack: http://hackage.haskell.org/package/rclient-0.1.0.0/docs/Network-Rserve-Client.html
 pub trait QAP1Decode {
@@ -67,7 +134,10 @@ pub trait QAP1Decode {
 
 impl<R: Reader> QAP1Decode for R {
     fn read_message(&mut self, hd: Option<(u32, u32, u32, u32)>) -> IoResult<Message> {
-        let (cmd, len, msg_id, lenhi) = hd.unwrap_or(try!(self.read_header()));
+        let (cmd, len, msg_id, lenhi) = match hd {
+            Some(hd) => hd,
+            None => try!(self.read_header())
+        };
         assert!(lenhi == 0); // TODO: support long mode
 
         debug!("reading {} bytes of data...", len);
@@ -107,9 +177,8 @@ impl<R: Reader> QAP1Decode for R {
     }
 
     fn read_sexp(&mut self, len: u32) -> IoResult<SExp> {
-        let word = try!(self.read_le_u32());
-        let (ty, len) = (word as u8, word >> 8);
-        fail!("@@TODO: read_sexp: ty 0x{:x}, len: 0x{:x}", ty, len)
+        let (ty, has_attr, len) = try!(XpressionTypes::decode(try!(self.read_le_u32())));
+        fail!("@@TODO: read_sexp: has_attr {}, ty {}, len: 0x{:x}", has_attr, ty, len)
     }
 }
 
