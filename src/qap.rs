@@ -203,51 +203,23 @@ impl<R: Reader + Seek> DataDecode for R {
         let attr = match has_attr {
             true => {
                 let here = try!(self.tell());
+                let a = Some(try!(self.read_sexp()));
                 len -= (try!(self.tell()) - here) as u32;
-                Some(try!(self.read_sexp()))
+                a
             },
             false => None
         };
 
         let x = match ty {
             XT_NULL => None,
-            XT_SYMNAME => {
-                debug!("SYMNAME len: {}", len);
-                let bytes = try!(self.read_exact(len as uint));
-                let bytes = match bytes.iter().position(|b| *b == 0) {
-                    Some(i) => bytes.slice_to(i),
-                    None => bytes.as_slice()
-                };
-                // TODO: factor this bytes-to-String thing out
-                let name = match from_utf8(bytes) {
-                    Some(s) => s.to_string(),
-                    // Use Show instance of &[u8]
-                    None => bytes.to_string()
-                };
-                debug!("SYMNAME name: {}", name);
-                Some(Rc::new(Symbol(name)))
-            },
-            XT_ARRAY_STR => {
-                let bytes = try!(self.read_exact(len as uint));
-                let mut items = Vec::new();
-                let mut skip_pad = false;
-                for section in bytes.as_slice().split(|b| *b == 0) {
-                    debug!("XT_ARRAY_STR: pad={} section={} items={}", skip_pad, section, items);
-                    if !skip_pad {
-                        match from_utf8(section) {
-                            Some(s) => items.push(s.to_string()),
-                            None => items.push(section.to_string()) // uses Show instance of &[u8]
-                        }
-                    }
-                    skip_pad = section.len() % 4 != 0
-                }
-                Some(Rc::new(ArrayString(items)))
-            },
+            XT_SYMNAME => to_symbol(try!(self.read_exact(len as uint))),
+            XT_ARRAY_STR => to_array_str(try!(self.read_exact(len as uint))),
             XT_LIST_TAG => {
                 let mut items = Vec::new();
                 while (try!(self.tell()) as u32) < len {
                     let (val, tag) = (try!(self.read_sexp()), try!(self.read_sexp()));
-                    items.push(Tagged(val, tag))
+                    items.push(Tagged(val, tag));
+                    debug!("another list item? tell={} len={}", try!(self.tell()) as u32, len);
                 }
                 Some(Rc::new(List(items)))
             },
@@ -261,6 +233,40 @@ impl<R: Reader + Seek> DataDecode for R {
         }
     }
 }
+
+
+fn to_symbol(bytes: Vec<u8>) -> SExp {
+    let bytes = match bytes.iter().position(|b| *b == 0) {
+        Some(i) => bytes.slice_to(i),
+        None => bytes.as_slice()
+    };
+    let name = to_string(bytes);
+    debug!("SYMNAME name: {}", name);
+    Some(Rc::new(Symbol(name)))
+}
+
+
+fn to_array_str(bytes: Vec<u8>) -> SExp {
+    let mut items = Vec::new();
+    let mut skip_pad = false;
+    for section in bytes.as_slice().split(|b| *b == 0) {
+        debug!("XT_ARRAY_STR: pad={} section={} items={}", skip_pad, section, items);
+        if !skip_pad {
+            items.push(to_string(section))
+        }
+        skip_pad = section.len() % 4 != 0
+    }
+    Some(Rc::new(ArrayString(items)))
+}
+
+fn to_string(bytes: &[u8]) -> String {
+    match from_utf8(bytes) {
+        Some(s) => s.to_string(),
+        // Use Show instance of &[u8]
+        None => bytes.to_string()
+    }
+}
+
 
 /*TODO
 trait QAP1Encode {
