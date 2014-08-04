@@ -132,7 +132,7 @@ impl XpressionTypes {
 
 /* new in 0102: if this flag is set then the length of the object
 is coded as 56-bit integer enlarging the header by 4 bytes */
-static XT_LARGE: u32 = 64;
+// TODO: static XT_LARGE: u32 = 64;
 /* flag; if set, the following REXP is the
 attribute */
 static XT_HAS_ATTR: u32 = 128;
@@ -250,11 +250,11 @@ fn to_array_str(bytes: Vec<u8>) -> SExp {
     let mut items = Vec::new();
     let mut skip_pad = false;
     for section in bytes.as_slice().split(|b| *b == 0) {
-        debug!("XT_ARRAY_STR: pad={} section={} items={}", skip_pad, section, items);
         if !skip_pad {
             items.push(to_string(section))
         }
-        skip_pad = section.len() % 4 != 0
+        debug!("XT_ARRAY_STR: items={}", items);
+        skip_pad = if skip_pad { false } else { (section.len() + 1) % 4 != 0 }
     }
     Some(Rc::new(ArrayString(items)))
 }
@@ -264,6 +264,23 @@ fn to_string(bytes: &[u8]) -> String {
         Some(s) => s.to_string(),
         // Use Show instance of &[u8]
         None => bytes.to_string()
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use std::rc::Rc;
+
+    use super::{to_array_str, ArrayString};
+
+    #[test]
+    fn str_pad() {
+        assert_eq!(to_array_str("abc\0defg\0\x01\x01\x01".as_bytes().to_vec()),
+                   Some(Rc::new(ArrayString(vec!("abc".to_string(),
+                                                 "defg".to_string())))))
+        assert_eq!(to_array_str("class\0\x01\x01".as_bytes().to_vec()),
+                   Some(Rc::new(ArrayString(vec!("class".to_string())))))
     }
 }
 
