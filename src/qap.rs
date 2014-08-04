@@ -2,6 +2,7 @@ use std::io::{IoResult};
 use std::num::from_uint;
 use std::io::MemReader;
 use std::rc::Rc;
+use std::str::from_utf8;
 
 use super::invalid_input;
 
@@ -23,10 +24,11 @@ pub enum Datum {
 
 #[deriving(Show, PartialEq, Eq)]
 pub enum SExpCell {
-    SExpWithAttrib(SExp, SExp),
-    ArrayString(Vec<String>)
+    ListTag(Vec<(SExp, SExp)>),
+    ArrayString(Vec<String>),
+    SExpWithAttrib(SExp, SExp)
 }
-pub type SExp = Rc<SExpCell>;
+pub type SExp = Option<Rc<SExpCell>>; // None = NULL / nil
 
 /* data types for the transport protocol (QAP1)
    do NOT confuse with XT_.. values. */
@@ -139,7 +141,7 @@ pub trait QAP1Decode {
 
 pub trait DataDecode {
     fn read_datum(&mut self) -> IoResult<Datum>;
-    fn read_sexp(&mut self, len: u32) -> IoResult<SExp>;
+    fn read_sexp(&mut self) -> IoResult<SExp>;
 }
 
 impl<R: Reader> QAP1Decode for R {
@@ -183,34 +185,55 @@ impl<R: Reader + Seek> DataDecode for R {
             Some(dt) => match dt {
                 DT_INT => self.read_le_i32().map(|i| DTInt(i)),
                 // TODO... 
-                DT_SEXP => self.read_sexp(len).map(|e| DTSExp(e))
+                DT_SEXP => self.read_sexp().map(|e| DTSExp(e))
             }
         }
     }
 
-    fn read_sexp(&mut self, len: u32) -> IoResult<SExp> {
-        let (ty, has_attr, len) = try!(XpressionTypes::decode(try!(self.read_le_u32())));
+    fn read_sexp(&mut self) -> IoResult<SExp> {
+        let (ty, has_attr, mut len) = try!(XpressionTypes::decode(try!(self.read_le_u32())));
 
-        if has_attr {
-            let here = try!(self.tell());
-            let attr = try!(self.read_sexp(len)); //@@len?
-            let len_x = len - (try!(self.tell()) - here) as u32;
-            let x = try!(self.read_sexp(len_x));
-            Ok(Rc::new(SExpWithAttrib(attr, x)))
-        } else {
-            match ty {
-                XT_ARRAY_STR => {
-                    let bytes = try!(self.read_exact(len as uint));
-                    let mut items = Vec::new();
-                    let mut pad = 0;
-                    for section in bytes.as_slice().split(|b| *b == 0) {
-                        items.push(section.slice_from(pad).to_string());
-                        pad = { let gap = section.len() % 4; if gap == 0 { 0 } else { 4 - gap } }
-                    }
-                    Ok(Rc::new(ArrayString(items)))
-                },
-                _ => fail!("@@TODO: read_sexp: ty {}, has_attr {}, len: 0x{:x}", has_attr, ty, len)
+        let attr = match has_attr {
+            true => {
+                let here = try!(self.tell());
+                len -= (try!(self.tell()) - here) as u32;
+                Some(try!(self.read_sexp()))
+            },
+            false => None
+        };
+
+        let x = match ty {
+            XT_LIST_TAG => {
+                let mut items = Vec::new();
+                while (try!(self.tell()) as u32) < len {
+                    let (tag, val) = (try!(self.read_sexp()), try!(self.read_sexp()));
+                    items.push((tag, val))
+                }
+                Some(Rc::new(ListTag(items)))
             }
+            
+            XT_ARRAY_STR => {
+                let bytes = try!(self.read_exact(len as uint));
+                let mut items = Vec::new();
+                let mut skip_pad = false;
+                for section in bytes.as_slice().split(|b| *b == 0) {
+                    debug!("XT_ARRAY_STR: pad={} section={} items={}", skip_pad, section, items);
+                    if !skip_pad {
+                        match from_utf8(section) {
+                            Some(s) => items.push(s.to_string()),
+                            None => items.push(section.to_string()) // uses Show instance of &[u8]
+                        }
+                    }
+                    skip_pad = section.len() % 4 != 0
+                }
+                Some(Rc::new(ArrayString(items)))
+            },
+            _ => fail!("@@TODO: read_sexp: ty {}, has_attr {}, len: 0x{:x}", has_attr, ty, len)
+        };
+
+        match attr {
+            Some(attr) => Ok(Some(Rc::new(SExpWithAttrib(attr, x)))),
+            None => Ok(x)
         }
     }
 }
