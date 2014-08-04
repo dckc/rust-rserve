@@ -3,9 +3,8 @@ use std::io::net::tcp::TcpStream;
 use std::io::{IoResult};
 use std::num::from_uint;
 
-use super::sexp::SExp;
 use super::DEFAULT_PORT;
-use super::qap::{QAP1Decode, DTSExp};
+use super::qap::{QAP1Decode, DTSExp, SExp};
 use super::invalid_input;
 
 #[deriving(FromPrimitive, Show, Eq, PartialEq)]

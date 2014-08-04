@@ -8,7 +8,6 @@ extern crate debug; // @@
 use std::io::net::ip::Port;
 use std::io::{IoResult, IoError, InvalidInput};
 
-pub mod sexp;
 pub mod qap;
 pub mod rsrv;
 pub mod oc;

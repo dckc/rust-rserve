@@ -1,8 +1,8 @@
 use std::io::{IoResult};
 use std::num::from_uint;
 use std::io::MemReader;
+use std::rc::Rc;
 
-use super::sexp::SExp;
 use super::invalid_input;
 
 #[deriving(PartialEq, Eq, Show)]
@@ -20,6 +20,13 @@ pub enum Datum {
     DTSExp(SExp)
 }
 
+
+#[deriving(Show, PartialEq, Eq)]
+pub enum SExpCell {
+    SExpWithAttrib(SExp, SExp),
+    ArrayString(Vec<String>)
+}
+pub type SExp = Rc<SExpCell>;
 
 /* data types for the transport protocol (QAP1)
    do NOT confuse with XT_.. values. */
@@ -128,6 +135,9 @@ static XT_HAS_ATTR: u32 = 128;
 pub trait QAP1Decode {
     fn read_message(&mut self, hd: Option<(u32, u32, u32, u32)>) -> IoResult<Message>;
     fn read_header(&mut self) -> IoResult<(u32, u32, u32, u32)>;
+}
+
+pub trait DataDecode {
     fn read_datum(&mut self) -> IoResult<Datum>;
     fn read_sexp(&mut self, len: u32) -> IoResult<SExp>;
 }
@@ -160,7 +170,9 @@ impl<R: Reader> QAP1Decode for R {
         let lenhi = try!(hd.read_le_u32());
         Ok((cmd, len, msg_id, lenhi))
     }
+}
 
+impl<R: Reader + Seek> DataDecode for R {
     fn read_datum(&mut self) -> IoResult<Datum> {
         let word = try!(self.read_le_u32());
         let (ty, len) = (word as u8, word >> 8);
@@ -178,7 +190,28 @@ impl<R: Reader> QAP1Decode for R {
 
     fn read_sexp(&mut self, len: u32) -> IoResult<SExp> {
         let (ty, has_attr, len) = try!(XpressionTypes::decode(try!(self.read_le_u32())));
-        fail!("@@TODO: read_sexp: has_attr {}, ty {}, len: 0x{:x}", has_attr, ty, len)
+
+        if has_attr {
+            let here = try!(self.tell());
+            let attr = try!(self.read_sexp(len)); //@@len?
+            let len_x = len - (try!(self.tell()) - here) as u32;
+            let x = try!(self.read_sexp(len_x));
+            Ok(Rc::new(SExpWithAttrib(attr, x)))
+        } else {
+            match ty {
+                XT_ARRAY_STR => {
+                    let bytes = try!(self.read_exact(len as uint));
+                    let mut items = Vec::new();
+                    let mut pad = 0;
+                    for section in bytes.as_slice().split(|b| *b == 0) {
+                        items.push(section.slice_from(pad).to_string());
+                        pad = { let gap = section.len() % 4; if gap == 0 { 0 } else { 4 - gap } }
+                    }
+                    Ok(Rc::new(ArrayString(items)))
+                },
+                _ => fail!("@@TODO: read_sexp: ty {}, has_attr {}, len: 0x{:x}", has_attr, ty, len)
+            }
+        }
     }
 }
 
