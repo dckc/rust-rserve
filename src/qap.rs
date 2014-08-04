@@ -24,10 +24,17 @@ pub enum Datum {
 
 #[deriving(Show, PartialEq, Eq)]
 pub enum SExpCell {
-    ListTag(Vec<(SExp, SExp)>),
+    Symbol(String),
     ArrayString(Vec<String>),
+    List(Vec<ListItem>),
     SExpWithAttrib(SExp, SExp)
 }
+#[deriving(Show, PartialEq, Eq)]
+pub enum ListItem {
+    Car(SExp),
+    Tagged(SExp, SExp)
+}
+
 pub type SExp = Option<Rc<SExpCell>>; // None = NULL / nil
 
 /* data types for the transport protocol (QAP1)
@@ -203,15 +210,23 @@ impl<R: Reader + Seek> DataDecode for R {
         };
 
         let x = match ty {
-            XT_LIST_TAG => {
-                let mut items = Vec::new();
-                while (try!(self.tell()) as u32) < len {
-                    let (tag, val) = (try!(self.read_sexp()), try!(self.read_sexp()));
-                    items.push((tag, val))
-                }
-                Some(Rc::new(ListTag(items)))
-            }
-            
+            XT_NULL => None,
+            XT_SYMNAME => {
+                debug!("SYMNAME len: {}", len);
+                let bytes = try!(self.read_exact(len as uint));
+                let bytes = match bytes.iter().position(|b| *b == 0) {
+                    Some(i) => bytes.slice_to(i),
+                    None => bytes.as_slice()
+                };
+                // TODO: factor this bytes-to-String thing out
+                let name = match from_utf8(bytes) {
+                    Some(s) => s.to_string(),
+                    // Use Show instance of &[u8]
+                    None => bytes.to_string()
+                };
+                debug!("SYMNAME name: {}", name);
+                Some(Rc::new(Symbol(name)))
+            },
             XT_ARRAY_STR => {
                 let bytes = try!(self.read_exact(len as uint));
                 let mut items = Vec::new();
@@ -228,9 +243,18 @@ impl<R: Reader + Seek> DataDecode for R {
                 }
                 Some(Rc::new(ArrayString(items)))
             },
+            XT_LIST_TAG => {
+                let mut items = Vec::new();
+                while (try!(self.tell()) as u32) < len {
+                    let (val, tag) = (try!(self.read_sexp()), try!(self.read_sexp()));
+                    items.push(Tagged(val, tag))
+                }
+                Some(Rc::new(List(items)))
+            },
             _ => fail!("@@TODO: read_sexp: ty {}, has_attr {}, len: 0x{:x}", has_attr, ty, len)
         };
 
+        debug!("read_sexp: attr={} x ={}", attr, x);
         match attr {
             Some(attr) => Ok(Some(Rc::new(SExpWithAttrib(attr, x)))),
             None => Ok(x)
