@@ -4,7 +4,7 @@ use std::io::{IoResult};
 use std::num::from_uint;
 
 use super::DEFAULT_PORT;
-use super::qap::{QAP1Decode, DTSExp, SExp};
+use super::qap::{QAP1Decode, SExp};
 use super::invalid_input;
 
 #[deriving(FromPrimitive, Show, Eq, PartialEq)]
@@ -16,8 +16,11 @@ enum CommandInit {
 }
 
 pub fn connect(host: &str, port: Option<Port>) -> IoResult<(TcpStream, SExp)> {
-    let mut socket = try!(TcpStream::connect(host, port.unwrap_or(DEFAULT_PORT)));
-    debug!("connected: {:?}", socket);
+    use self::CommandInit::CMD_OCinit;
+    use super::qap::Datum::DTSExp;
+
+    let mut socket = try!(TcpStream::connect((host, port.unwrap_or(DEFAULT_PORT))));
+    debug!("connected to: {}", socket.peer_name().ok().expect("no peer name?!"));
 
     let (cmd, len, msg_id, lenhi) = try!(socket.read_header());
     debug!("header: {}", (cmd, len, msg_id, lenhi));

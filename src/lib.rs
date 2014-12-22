@@ -3,7 +3,6 @@
 
 #![feature(phase)]
 #[phase(plugin, link)] extern crate log;
-extern crate debug; // @@
 
 use std::io::net::ip::Port;
 use std::io::{IoResult, IoError, InvalidInput};

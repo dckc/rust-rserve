@@ -6,19 +6,19 @@ use std::io::TcpStream;
 
 bitflags!(
     flags Flags: u32 {
-        static CMD_RESP    = 0x10000,
-        static RESP_OK     = 0x0001,
-        static RESP_ERR    = 0x0002,
-        static CMD_OOB     = 0x20000
+        const CMD_RESP    = 0x10000,
+        const RESP_OK     = 0x0001,
+        const RESP_ERR    = 0x0002,
+        const CMD_OOB     = 0x20000
     }
-)
+);
 
 #[deriving(Show, PartialEq, Eq)]
 pub enum ServerProtocol {
     QAP1(String, Vec<ServerAttribute>) // exactly 5. hm.
 }
 
-#[deriving(FromPrimitive, Show, PartialEq, Eq)]
+#[deriving(FromPrimitive, Show, PartialEq, Eq, Copy)]
 #[repr(uint)]
 pub enum AttrIndex {
     IDsig = 0, ServerVersion, Protocol, Opt4,
@@ -35,6 +35,19 @@ pub enum ServerAttribute {
 
 impl ServerAttribute {
     pub fn new(bytes: &[u8]) -> ServerAttribute {
+        use self::ServerAttribute::{
+            AnyAttr,
+            AuthorizationRequired,
+            Key,
+            RVersion,
+        };
+        use self::AuthType:: {
+            AnyAuth,
+            MD5,
+            PlainText,
+            UnixCrypt,
+        };
+
         assert!(bytes.len() == 4);
         let ch = |i| bytes[i] as char;
         let other = || AnyAttr({
@@ -63,7 +76,7 @@ impl ServerAttribute {
     }
 }
 
-#[deriving(Show, PartialEq, Eq)]
+#[deriving(Show, PartialEq, Eq, Copy)]
 pub enum AuthType {
     PlainText,
     UnixCrypt,
@@ -74,6 +87,10 @@ pub enum AuthType {
 
 impl ServerProtocol {
     pub fn decode_id_string(buf: &[u8]) -> IoResult<ServerProtocol> {
+        use self::AttrIndex::{IDsig, ServerVersion, Protocol, Opt4, Opt8};
+        use self::ServerAttribute::{AnyAttr};
+        use self::ServerProtocol::QAP1;
+
         if buf.len() != 32 {
             return Err(IoError{ kind: InvalidInput, desc: "id string length must be 32", detail: None});
         }
@@ -108,13 +125,13 @@ pub trait ReadIDString {
 impl<R: Reader> ReadIDString for R {
     fn read_id_string(&mut self) -> IoResult<ServerProtocol> {
         let mut buf = [0u8, ..32];
-        try!(self.read_at_least(32, buf));
-        ServerProtocol::decode_id_string(buf)
+        try!(self.read_at_least(32, buf.as_mut_slice()));
+        ServerProtocol::decode_id_string(buf.as_slice())
     }
 }
 
 pub fn connect(host: &str, port: Option<Port>) -> IoResult<(TcpStream, ServerProtocol)> {
-    let mut socket = try!(TcpStream::connect(host, port.unwrap_or(super::DEFAULT_PORT)));
+    let mut socket = try!(TcpStream::connect((host, port.unwrap_or(super::DEFAULT_PORT))));
     let protocol = try!(socket.read_id_string());
     Ok((socket, protocol))
 }
@@ -122,14 +139,16 @@ pub fn connect(host: &str, port: Option<Port>) -> IoResult<(TcpStream, ServerPro
 
 #[cfg(test)]
 mod tests {
-    use super::{ServerProtocol, QAP1,
-                RVersion, AuthorizationRequired, Key, AnyAttr,
-                MD5};
+    use super::ServerProtocol;
+    use super::ServerProtocol::QAP1;
+    use super::ServerAttribute::{
+        AnyAttr, RVersion, AuthorizationRequired, Key};
+    use super::AuthType::MD5;
 
     #[test]
     fn empty_id_string() {
         match ServerProtocol::decode_id_string("".as_bytes()) {
-            Ok(_) => fail!(),
+            Ok(_) => panic!(),
             Err(e) => debug!("{}", e)
         }
     }
@@ -151,7 +170,7 @@ mod tests {
     #[test]
     fn unknown_id_string() {
         match ServerProtocol::decode_id_string("Rsrv0100QAP2****R151ARm5Kabc4444".as_bytes()) {
-            Ok(_) => fail!(),
+            Ok(_) => panic!(),
             Err(e) => debug!("{}", e)
         }
     }

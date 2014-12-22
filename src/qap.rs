@@ -183,21 +183,27 @@ impl<R: Reader> QAP1Decode for R {
 
 impl<R: Reader + Seek> DataDecode for R {
     fn read_datum(&mut self) -> IoResult<Datum> {
+        use self::Datum::{DTInt, DTSExp};
+
         let word = try!(self.read_le_u32());
         let (ty, len) = (word as u8, word >> 8);
-        debug!("read_datum got ty={:u}, len=0x{:x}", ty, len);
+        debug!("read_datum got ty={}, len=0x{:x}", ty, len);
 
         match from_uint::<DT>(ty as uint) {
             None => invalid_input("bad DT", format!("DT: 0x{:x}", ty)),
             Some(dt) => match dt {
-                DT_INT => self.read_le_i32().map(|i| DTInt(i)),
+                DT::DT_INT => self.read_le_i32().map(|i| DTInt(i)),
                 // TODO... 
-                DT_SEXP => self.read_sexp().map(|e| DTSExp(e))
+                DT::DT_SEXP => self.read_sexp().map(|e| DTSExp(e))
             }
         }
     }
 
     fn read_sexp(&mut self) -> IoResult<SExp> {
+        use self::ListItem::Tagged;
+        use self::SExpCell::{List, SExpWithAttrib};
+        use self::XpressionTypes::{XT_NULL, XT_SYMNAME, XT_ARRAY_STR, XT_LIST_TAG};
+
         let (ty, has_attr, mut len) = try!(XpressionTypes::decode(try!(self.read_le_u32())));
 
         let attr = match has_attr {
@@ -223,7 +229,7 @@ impl<R: Reader + Seek> DataDecode for R {
                 }
                 Some(Rc::new(List(items)))
             },
-            _ => fail!("@@TODO: read_sexp: ty {}, has_attr {}, len: 0x{:x}", has_attr, ty, len)
+            _ => panic!("@@TODO: read_sexp: ty {}, has_attr {}, len: 0x{:x}", has_attr, ty, len)
         };
 
         debug!("read_sexp: attr={} x ={}", attr, x);
@@ -236,6 +242,8 @@ impl<R: Reader + Seek> DataDecode for R {
 
 
 fn to_symbol(bytes: Vec<u8>) -> SExp {
+    use self::SExpCell::Symbol;
+
     let bytes = match bytes.iter().position(|b| *b == 0) {
         Some(i) => bytes.slice_to(i),
         None => bytes.as_slice()
@@ -247,6 +255,8 @@ fn to_symbol(bytes: Vec<u8>) -> SExp {
 
 
 fn to_array_str(bytes: Vec<u8>) -> SExp {
+    use self::SExpCell::ArrayString;
+
     let mut items = Vec::new();
     let mut skip_pad = false;
     for section in bytes.as_slice().split(|b| *b == 0) {
@@ -272,13 +282,15 @@ fn to_string(bytes: &[u8]) -> String {
 mod tests {
     use std::rc::Rc;
 
-    use super::{to_array_str, ArrayString};
+    use super::{to_array_str};
+    use super::SExpCell::ArrayString;
+
 
     #[test]
     fn str_pad() {
         assert_eq!(to_array_str("abc\0defg\0\x01\x01\x01".as_bytes().to_vec()),
                    Some(Rc::new(ArrayString(vec!("abc".to_string(),
-                                                 "defg".to_string())))))
+                                                 "defg".to_string())))));
         assert_eq!(to_array_str("class\0\x01\x01".as_bytes().to_vec()),
                    Some(Rc::new(ArrayString(vec!("class".to_string())))))
     }
